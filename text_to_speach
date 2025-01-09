@@ -1,0 +1,70 @@
+#include <Arduino.h>
+#include <AudioFileSourceSD.h>
+#include <AudioGeneratorWAV.h>
+#include <AudioOutputI2S.h>
+#include <SD.h>
+#include <SPI.h>
+
+// microSD Card Reader connections
+#define SD_CS          7
+#define SPI_MOSI       6
+#define SPI_MISO       5
+#define SPI_SCK        4
+
+// I2S Connections
+#define I2S_DOUT       1
+#define I2S_BCLK       2
+#define I2S_LRC        3
+
+AudioGeneratorWAV *wav;  // Change from MP3 to WAV
+AudioFileSourceSD *file;
+AudioOutputI2S *out;
+String inputCommand;
+
+void setup() {
+    // Initialize Serial
+    Serial.begin(115200);
+    delay(1000);
+
+    // Initialize SPI for SD card
+    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(SD_CS, HIGH);
+
+    // Initialize SD card
+    if (!SD.begin(SD_CS)) {
+        Serial.println("SD card initialization failed!");
+        while (1);
+    }
+    Serial.println("SD card initialized.");
+
+    // Initialize I2S audio output
+    out = new AudioOutputI2S();
+    out->SetPinout(I2S_BCLK, I2S_LRC, I2S_DOUT);
+    out->SetGain(1);  // Adjust volume (0.0 to 1.0)
+}
+
+void loop() {
+    // Check if data is available in Serial Monitor
+    if (Serial.available() > 0) {
+        inputCommand = Serial.readStringUntil('\n'); // Read user input
+        inputCommand.trim(); // Remove leading/trailing spaces or newline
+
+        if (inputCommand == "hello") { // Check for the "hello" command
+            Serial.println("Playing audio: Hello.wav");
+            file = new AudioFileSourceSD("/Hello.wav");
+            wav = new AudioGeneratorWAV();  // Initialize WAV generator
+            wav->begin(file, out);
+        } else {
+            Serial.println("Unknown command. Type 'hello' to play audio.");
+        }
+    }
+
+    // Check if the WAV file is playing
+    if (wav != nullptr && wav->isRunning()) {
+        if (!wav->loop()) {
+            wav->stop();
+            Serial.println("Playback finished.");
+        }
+    }
+}
