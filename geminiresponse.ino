@@ -6,7 +6,7 @@ const char* ssid = "OTTO";          // Wi-Fi SSID
 const char* password = "12345678";  // Wi-Fi Password
 
 // Gemini API URL and API Key
-const String apiKey = " "; // Gemini API Key
+const String apiKey = "AIzaSyD51z_HiybRKdNpRw3zou89eN-Rfz_dQ1A"; // Gemini API Key
 const String apiURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey;
 
 void setup() {
