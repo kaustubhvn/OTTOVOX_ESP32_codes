@@ -1,6 +1,6 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
-
+String geminiresponse =" ";
 // Wi-Fi Credentials
 const char* ssid = "OTTO";          // Wi-Fi SSID
 const char* password = "12345678";  // Wi-Fi Password
@@ -66,7 +66,7 @@ void loop() {
           // Manual parsing of the response
           int startIndex = response.indexOf("\"text\": \"") + 9;
           int endIndex = response.indexOf("\"", startIndex + 1);
-          String geminiresponse = "";
+          
 
           if (startIndex > 8 && endIndex > startIndex) {
             geminiresponse = response.substring(startIndex, endIndex);
