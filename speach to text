@@ -1,171 +1,115 @@
 #include <WiFi.h>
-#include <SPIFFS.h>
 #include <WiFiClientSecure.h>
-#include <ArduinoJson.h>
+#include <FS.h>
+#include <SPIFFS.h>
 
-// Wi-Fi Credentials
+String sttresponse = "";
+
 const char* ssid = "OTTO";          // Wi-Fi SSID
-const char* password = "12345678";  // Wi-Fi Password
+const char* password = "123456789";  // Wi-Fi Password
 
-// Deepgram API Details
 const char* deepgramHost = "api.deepgram.com";
 const char* deepgramPath = "/v1/listen?model=nova-2&smart_format=true";
 const String deepgramApiKey = "9fc68b4a4932f146e2009143ef8f2ee0d3f57cbb";
 
-// File Details
 const char* mp3FilePath = "/audio.mp3"; // Path to the MP3 file in SPIFFS
 
 void setup() {
-  // Initialize serial communication
   Serial.begin(115200);
-
-  // Initialize SPIFFS
   if (!SPIFFS.begin(true)) {
-    Serial.println("An error occurred while mounting SPIFFS");
+    Serial.println("An Error has occurred while mounting SPIFFS");
     return;
   }
 
-  // Check if the MP3 file exists
-  if (!SPIFFS.exists(mp3FilePath)) {
-    Serial.println("MP3 file not found in SPIFFS");
-    return;
-  }
-
-  // Connect to Wi-Fi
-  Serial.println("Connecting to Wi-Fi...");
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
-    Serial.print(".");
+    Serial.println("Connecting to WiFi...");
   }
-  Serial.println("\nConnected to Wi-Fi!");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
+  Serial.println("Connected to WiFi");
 
-  // Send the entire MP3 file to Deepgram
-  sendToDeepgram();
+  // Send the audio file to Deepgram
+  sendAudioFileToDeepgram();
 }
 
 void loop() {
-  // Do nothing
-  //  Serial.println("Free Heap: " + String(ESP.getFreeHeap()));
+  // Nothing to do here
 }
 
-void sendToDeepgram() {
+void sendAudioFileToDeepgram() {
   WiFiClientSecure client;
-  client.setInsecure(); // For HTTPS without certificate validation
+  client.setInsecure(); // Use with caution; for testing purposes only
 
-  // Set a larger timeout for the connection (5 minutes)
-  client.setTimeout(1000); // 300000 milliseconds = 5 minutes
-
-  // Connect to Deepgram API
-  Serial.println("Connecting to Deepgram...");
-  bool connected = false;
-  for (int attempt = 0; attempt < 3; attempt++) {  // Retry up to 3 times
-    if (client.connect(deepgramHost, 443)) {
-      connected = true;
-      break;
-    }
-    Serial.println("Connection to Deepgram failed. Retrying...");
-    delay(3000);  // Wait for 3 seconds before retrying
-  }
-
-  if (!connected) {
-    Serial.println("Failed to connect to Deepgram after multiple attempts.");
+  if (!client.connect(deepgramHost, 443)) {
+    Serial.println("Connection to Deepgram failed!");
     return;
   }
 
-  // Open the MP3 file
-  File mp3File = SPIFFS.open(mp3FilePath, "r");
-  if (!mp3File) {
-    Serial.println("Failed to open MP3 file.");
+  File audioFile = SPIFFS.open(mp3FilePath, "r");
+  if (!audioFile) {
+    Serial.println("Failed to open audio file");
     return;
   }
 
-  // Get the file size
-  size_t contentLength = mp3File.size();
-  Serial.println("MP3 file size: " + String(contentLength) + " bytes");
+  int audioFileSize = audioFile.size();
 
-  // Create the HTTP POST request header
-  String request = "POST " + String(deepgramPath) + " HTTP/1.1\r\n";
-  request += "Host: " + String(deepgramHost) + "\r\n";
-  request += "Authorization: Token " + deepgramApiKey + "\r\n";
-  request += "Content-Type: audio/mpeg\r\n"; // Changed to audio/mpeg for MP3
-  request += "Content-Length: " + String(contentLength) + "\r\n";
-  request += "Connection: close\r\n\r\n";
+  // Construct HTTP POST request headers
+  String request = String("POST ") + deepgramPath + " HTTP/1.1\r\n" +
+                   "Host: " + deepgramHost + "\r\n" +
+                   "Authorization: Token " + deepgramApiKey + "\r\n" +
+                   "Content-Type: audio/mpeg\r\n" +
+                   "Content-Length: " + String(audioFileSize) + "\r\n" +
+                   "\r\n";
 
-  // Debugging: Print the full request to the Serial Monitor
-  Serial.println("Sending request:");
-  Serial.println(request);
-
-  // Send the HTTP header
+  // Send the HTTP request headers
   client.print(request);
 
-  // Send the entire MP3 file
-  const size_t chunkSize = 1024; // 1 KB chunk size
+  // Send the audio file content in 1 KB chunks
+  const size_t chunkSize = 1024;
   uint8_t buffer[chunkSize];
+  size_t totalBytesSent = 0;
   int chunkCount = 0;
-  size_t bytesSent = 0;
 
-  while (bytesSent < contentLength && mp3File.available()) {
-    size_t bytesRead = mp3File.read(buffer, chunkSize);
+  while (audioFile.available()) {
+    size_t bytesRead = audioFile.read(buffer, sizeof(buffer));
     client.write(buffer, bytesRead);
-    bytesSent += bytesRead;
+    totalBytesSent += bytesRead;
     chunkCount++;
-    Serial.println("Uploaded chunk " + String(chunkCount) + ", bytes: " + String(bytesRead));
+    Serial.printf("Chunk %d sent: %d bytes\n", chunkCount, bytesRead);
   }
 
-  mp3File.close();
-  Serial.println("Total chunks uploaded: " + String(chunkCount));
+  audioFile.close();
+  Serial.printf("Total bytes sent: %d\n", totalBytesSent);
 
-  // Read and process the response from Deepgram
+  // Process the response from Deepgram
   processDeepgramResponse(client);
-
-  // Close the connection
   client.stop();
-  Serial.println("Connection closed.");
 }
 
 void processDeepgramResponse(WiFiClientSecure &client) {
-  // Allocate a buffer to store the response from Deepgram
   String responseBody = "";
 
-  // Read the response from Deepgram
   while (client.connected() || client.available()) {
     String line = client.readStringUntil('\n');
-    responseBody += line + '\n'; // Append newline to maintain original formatting
+    responseBody += line + '\n';
   }
 
-  // Output the raw response
-  Serial.println("Full response received:");
-  Serial.println(responseBody);
+  // Serial.println("Full response from Deepgram:");
+  // Serial.println(responseBody);
 
-  // Parse the response with ArduinoJson
-  StaticJsonDocument<8192> doc;
-  DeserializationError error = deserializeJson(doc, responseBody);
-
-  if (error) {
-    Serial.print("Failed to parse Deepgram response: ");
-    Serial.println(error.c_str());
+  int transcriptStart = responseBody.indexOf("\"transcript\":\"");
+  if (transcriptStart == -1) {
+    Serial.println("Error: 'transcript' not found in the response.");
     return;
   }
 
-  // Extract the transcription from the parsed JSON
-  if (doc.containsKey("results") && doc["results"][0].containsKey("alternatives")) {
-    String transcription = doc["results"][0]["alternatives"][0]["transcript"].as<String>();
-    Serial.println("Transcription: " + transcription);
-
-    // Additional logic for handling keywords or triggers
-    handleTranscription(transcription);
-  } else {
-    Serial.println("No transcription found in Deepgram response.");
+  transcriptStart += 14;
+  int transcriptEnd = responseBody.indexOf("\"", transcriptStart);
+  if (transcriptEnd == -1) {
+    Serial.println("Error: End of 'transcript' not found.");
+    return;
   }
+
+  String sttresponse = responseBody.substring(transcriptStart, transcriptEnd);
+  Serial.println("Transcription: " + sttresponse);
 }
-
-void handleTranscription(const String& transcription) {
-  // Example handling logic
-  Serial.println("Handling transcription...");
-  Serial.println("Processed Transcription: " + transcription);
-}
-
-
