@@ -1,79 +1,95 @@
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <FS.h>
 #include <SPIFFS.h>
-#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 
-// Wi-Fi Credentials
-const char* ssid = "OTTO";
-const char* password = "12345678";
+String sttresponse = "";
+String geminiresponse =" ";
 
-// Deepgram API Credentials
+const char* ssid = "OTTO";          // Wi-Fi SSID
+const char* password = "123456789";  // Wi-Fi Passwor
+
+// Deepgram API URL and API Key
 const char* deepgramHost = "api.deepgram.com";
 const char* deepgramPath = "/v1/listen?model=nova-2&smart_format=true";
 const String deepgramApiKey = "9fc68b4a4932f146e2009143ef8f2ee0d3f57cbb";
 
-// Gemini API Credentials
-const String apiKey = "AIzaSyD51z_HiybRKdNpRw3zou89eN-Rfz_dQ1A";
+// Gemini API URL and API Key
+const String apiKey = "AIzaSyD51z_HiybRKdNpRw3zou89eN-Rfz_dQ1A"; // Gemini API Key
 const String apiURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey;
+const String common = "You are OTTO, a 3D-printed robot developed by ISA-VESIT. OTTO is equipped with servo motors for hand movements, N20 motors for movement, and an OLED display to show expressions. It has an INMP441 microphone for speech recognition, a MAX98357A amplifier ,speaker for speech synthesis, and is powered by an ESP32-S3 DevKit M1 controller for processing. OTTO's capabilities include speech recognition, text processing, and speech synthesis. OTTO can respond to speech, generate outputs, display emotions on the OLED screen, and perform basic movements using its motors. The response you generate will be given for speech synthesis, so provide clear lines without using special characters. Please respond to the next word after this instruction.";
 
-// File path for audio
-const char* mp3FilePath = "/audio.mp3";
-
-// Global variable for the transcript
-String transcript = "";
+const char* wavFilePath = "/audio.wav"; // Path to the MP3 file in SPIFFS
 
 void setup() {
   Serial.begin(115200);
-
-  // Initialize SPIFFS
   if (!SPIFFS.begin(true)) {
-    Serial.println("Failed to mount SPIFFS");
+    Serial.println("An Error has occurred while mounting SPIFFS");
     return;
   }
 
-  // Connect to Wi-Fi
-  Serial.println("Connecting to Wi-Fi...");
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
-    Serial.print(".");
+    Serial.println("Connecting to WiFi...");
   }
-  Serial.println("\nConnected to Wi-Fi!");
-  Serial.println("IP Address: " + WiFi.localIP().toString());
+  Serial.println("Connected to WiFi");
+
+  // Send the audio file to Deepgram
+  sendAudioFileToDeepgram();
+}
+
+void loop() {
+  // Nothing to do here
 }
 
 void sendAudioFileToDeepgram() {
   WiFiClientSecure client;
-  client.setInsecure(); // Use with caution for testing purposes
+  client.setInsecure(); // Use with caution; for testing purposes only
 
   if (!client.connect(deepgramHost, 443)) {
-    Serial.println("Failed to connect to Deepgram");
+    Serial.println("Connection to Deepgram failed!");
     return;
   }
 
-  File audioFile = SPIFFS.open(mp3FilePath, "r");
+  File audioFile = SPIFFS.open(wavFilePath, "r");
   if (!audioFile) {
     Serial.println("Failed to open audio file");
     return;
   }
 
   int audioFileSize = audioFile.size();
+
+  // Construct HTTP POST request headers
   String request = String("POST ") + deepgramPath + " HTTP/1.1\r\n" +
                    "Host: " + deepgramHost + "\r\n" +
                    "Authorization: Token " + deepgramApiKey + "\r\n" +
                    "Content-Type: audio/mpeg\r\n" +
-                   "Content-Length: " + String(audioFileSize) + "\r\n\r\n";
+                   "Content-Length: " + String(audioFileSize) + "\r\n" +
+                   "\r\n";
 
+  // Send the HTTP request headers
   client.print(request);
 
-  uint8_t buffer[1024];
+  // Send the audio file content in 1 KB chunks
+  const size_t chunkSize = 1024;
+  uint8_t buffer[chunkSize];
+  size_t totalBytesSent = 0;
+  int chunkCount = 0;
+
   while (audioFile.available()) {
     size_t bytesRead = audioFile.read(buffer, sizeof(buffer));
     client.write(buffer, bytesRead);
+    totalBytesSent += bytesRead;
+    chunkCount++;
+    Serial.printf("Chunk %d sent: %d bytes\n", chunkCount, bytesRead);
   }
-  audioFile.close();
 
+  audioFile.close();
+  Serial.printf("Total bytes sent: %d\n", totalBytesSent);
+
+  // Process the response from Deepgram
   processDeepgramResponse(client);
   client.stop();
 }
@@ -82,57 +98,90 @@ void processDeepgramResponse(WiFiClientSecure &client) {
   String responseBody = "";
 
   while (client.connected() || client.available()) {
-    responseBody += client.readStringUntil('\n');
+    String line = client.readStringUntil('\n');
+    responseBody += line + '\n';
   }
 
-  int startIndex = responseBody.indexOf("\"transcript\":\"");
-  if (startIndex != -1) {
-    startIndex += 14;
-    int endIndex = responseBody.indexOf("\"", startIndex);
-    if (endIndex != -1) {
-      transcript = responseBody.substring(startIndex, endIndex);
-      Serial.println("Transcription: " + transcript);
-    } else {
-      Serial.println("Transcript end not found");
-    }
-  } else {
-    Serial.println("Transcript not found in response");
+  // Serial.println("Full response from Deepgram:");
+  // Serial.println(responseBody);
+
+  int transcriptStart = responseBody.indexOf("\"transcript\":\"");
+  if (transcriptStart == -1) {
+    Serial.println("Error: 'transcript' not found in the response.");
+    return;
   }
+
+  transcriptStart += 14;
+  int transcriptEnd = responseBody.indexOf("\"", transcriptStart);
+  if (transcriptEnd == -1) {
+    Serial.println("Error: End of 'transcript' not found.");
+    return;
+  }
+
+  String sttresponse = responseBody.substring(transcriptStart, transcriptEnd);
+  Serial.println("Transcription: " + sttresponse);
+
+
+  //space for the condition if the responce is prerecorded or not
+
+  gemini( sttresponse);
 }
 
-void geminiii() {
-  if (transcript.length() > 0) {
-    Serial.println("Sending transcript to Gemini API: " + transcript);
+void gemini(String sttresponse) {
+  // Check if there is data available in the serial monitor
+  // if (Serial.available()) {
+    String command = sttresponse; // Read the input command
+    command.trim(); // Remove any extra spaces or newlines
+  
+    if (command.length() > 0) {
+      Serial.println("Sending command to Gemini API: " + command);
 
-    if (WiFi.status() == WL_CONNECTED) {
-      HTTPClient http;
-      http.begin(apiURL);
-      http.addHeader("Content-Type", "application/json");
+      // Send command to the Gemini API
+      if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
 
-      String payload = "{";
-      payload += "\"contents\": [{";
-      payload += "\"parts\": [{";
-      payload += "\"text\": \"" + transcript + "\"";
-      payload += "}]}]}";
+        // Configure HTTP request
+        http.begin(apiURL);
+        http.addHeader("Content-Type", "application/json"); // Set content type to JSON
 
-      int httpResponseCode = http.POST(payload);
-      if (httpResponseCode > 0) {
-        String response = http.getString();
-        Serial.println("Response from Gemini API: " + response);
+        // Manually construct the JSON payload
+        String payload = "{";
+        payload += "\"contents\": [{";
+        payload += "\"parts\": [{";
+        payload += "\"text\": \"" + common + " " + command + "\"";
+        payload += "}]";
+        payload += "}]";
+        payload += "}";
+
+        // Serial.println("Payload: " + payload); // Debug: Print the payload
+
+        // Send POST request
+        int httpResponseCode = http.POST(payload);
+
+        // Handle response
+        if (httpResponseCode > 0) {
+          String response = http.getString();
+          // Serial.println("Response from Gemini API: " + response);
+
+          // Manual parsing of the response
+          int startIndex = response.indexOf("\"text\": \"") + 9;
+          int endIndex = response.indexOf("\"", startIndex + 1);
+          
+
+          if (startIndex > 8 && endIndex > startIndex) {
+            geminiresponse = response.substring(startIndex, endIndex);
+            Serial.println("Parsed Response: " + geminiresponse); // Print the extracted response
+          } else {
+            Serial.println("Error: Could not parse the response.");
+          }
+        } else {
+          Serial.println("Error in HTTP request. Code: " + String(httpResponseCode));
+        }
+
+        http.end(); // Free resources
       } else {
-        Serial.println("HTTP request failed. Code: " + String(httpResponseCode));
+        Serial.println("Wi-Fi disconnected. Cannot send request.");
       }
-      http.end();
-    } else {
-      Serial.println("Wi-Fi not connected");
     }
-  } else {
-    Serial.println("No transcript available");
   }
-}
 
-void loop() {
-  sendAudioFileToDeepgram();
-  geminiii();
-  delay(30000); // Wait 30 seconds before sending again
-}
